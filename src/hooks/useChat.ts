@@ -2,7 +2,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type { Store, Message, Session, A2UISurfaceState } from "@/types";
 import { uid, genTitle, sleep } from "@/lib/utils";
-import { pickAnswer } from "@/lib/data";
+// import { pickAnswer } from "@/lib/data";
 import { a2ApplyEnvelope, a2SetImmutable } from "@/lib/a2ui";
 import { a2uiActionReply, type A2UIActionPayload } from "@/lib/a2ui-data";
 
@@ -71,59 +71,77 @@ export function useChat() {
   // ---- Core agent runner (supports both text-only and A2UI answers) ----
   const runAgent = useCallback(async (botId: string, userText: string) => {
     const myRun = ++RUN;
-    const ans = pickAnswer(userText);
     const cancelled = () => myRun !== RUN;
 
-    // Status phase
-    for (let i = 0; i < ans.status.length; i++) {
-      if (cancelled()) return;
-      patchMsg(botId, { phase: "status", statusText: ans.status[i] });
-      await sleep(620 + Math.random() * 280);
-    }
-    if (cancelled()) return;
+    try {
+      patchMsg(botId, { phase: "status", statusText: "요청을 처리하고 있어요…" });
 
-    // CoT phase
-    patchMsg(botId, { phase: "reasoning", cot: ans.cot, cotRevealed: 0 });
-    for (let i = 0; i < ans.cot.length; i++) {
-      if (cancelled()) return;
-      patchMsg(botId, { cotRevealed: i + 1 });
-      await sleep(560 + Math.random() * 320);
-    }
-    if (cancelled()) return;
-    await sleep(280);
+      const res = await fetch("http://localhost:8000/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: activeId ?? botId,
+          message: userText,
+        }),
+      });
 
-    // Answer text streaming
-    patchMsg(botId, { phase: "answer", text: "" });
-    const tokens = ans.md.match(/(\s+|[^\s]+)/g) ?? [ans.md];
-    let acc = "";
-    for (let i = 0; i < tokens.length; i++) {
-      if (cancelled()) { patchMsg(botId, { streaming: false, stopped: true }); return; }
-      acc += tokens[i];
-      patchMsg(botId, { text: acc });
-      scrollCb.current?.();
-      const tk = tokens[i];
-      let d = 14 + Math.random() * 22;
-      if (/[.!?。]\s*$/.test(tk)) d += 120;
-      if (/\n/.test(tk)) d += 40;
-      await sleep(d);
-    }
-    if (cancelled()) return;
-
-    // A2UI envelope streaming (if this is an A2UI answer)
-    if (ans.a2ui && ans.a2ui.length > 0) {
-      patchMsg(botId, { phase: "a2ui" });
-      let surface: A2UISurfaceState | null = null;
-      for (const env of ans.a2ui) {
-        if (cancelled()) return;
-        surface = a2ApplyEnvelope(surface, env);
-        patchMsg(botId, { a2uiState: surface });
-        await sleep(300 + Math.random() * 200);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
-      if (cancelled()) return;
-    }
 
-    patchMsg(botId, { phase: "done", streaming: false, sources: ans.sources ?? [] });
-    setStore((st) => ({ ...st })); // trigger persist
+      if (!res.body) {
+        throw new Error("ReadableStream is not supported.");
+      }
+
+      if (cancelled()) return;
+
+      patchMsg(botId, { phase: "answer", text: "" });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+
+      while (true) {
+        if (cancelled()) {
+          await reader.cancel();
+          patchMsg(botId, { streaming: false, stopped: true });
+          return;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        acc += decoder.decode(value, { stream: true });
+        patchMsg(botId, { text: acc });
+        scrollCb.current?.();
+      }
+
+      const tail = decoder.decode();
+      if (tail) {
+        acc += tail;
+        patchMsg(botId, { text: acc });
+      }
+
+      if (cancelled()) return;
+
+      patchMsg(botId, {
+        phase: "done",
+        streaming: false,
+        sources: [],
+      });
+
+      setStore((st) => ({ ...st })); // trigger persist
+    } catch (err) {
+      if (cancelled()) return;
+
+      patchMsg(botId, {
+        phase: "done",
+        streaming: false,
+        text: `API 호출 중 오류가 발생했습니다. (${err instanceof Error ? err.message : "Unknown error"})`,
+      });
+
+      setStore((st) => ({ ...st })); // trigger persist
+    }
   }, [patchMsg]);
 
   // ---- Action runner (for A2UI button events) ----
