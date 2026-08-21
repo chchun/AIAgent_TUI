@@ -1,5 +1,5 @@
 "use client";
-import { Menu, PanelLeft, Pencil, Moon, Sun } from "lucide-react";
+import { LogIn, Menu, PanelLeft, Pencil, Moon, Sun } from "lucide-react";
 
 interface Props {
   scrolled: boolean;
@@ -8,19 +8,19 @@ interface Props {
   onNewChat: () => void;
   onToggleSidebar: () => void;
   onOpenMobileSidebar: () => void;
+  onOpenLogin: () => void;
 }
 
-export default function Topbar({ scrolled, theme, onToggleTheme, onNewChat, onToggleSidebar, onOpenMobileSidebar }: Props) {
+export default function Topbar({ scrolled, theme, onToggleTheme, onNewChat, onToggleSidebar, onOpenMobileSidebar, onOpenLogin }: Props) {
   return (
     <div className={"topbar" + (scrolled ? " scrolled" : "")}>
       <button className="icon-btn only-mobile" onClick={onOpenMobileSidebar} title="메뉴">
         <Menu size={20} />
       </button>
       <button
-        className="icon-btn"
+        className="icon-btn only-desktop"
         onClick={onToggleSidebar}
         title="사이드바 접기"
-        style={{ display: "grid" }}
       >
         <PanelLeft size={19} />
       </button>
@@ -32,6 +32,9 @@ export default function Topbar({ scrolled, theme, onToggleTheme, onNewChat, onTo
       <div className="spacer" />
       <button className="icon-btn" onClick={onNewChat} title="새 대화">
         <Pencil size={19} />
+      </button>
+      <button className="icon-btn" onClick={onOpenLogin} title="로그인">
+        <LogIn size={19} />
       </button>
       <button className="icon-btn" onClick={onToggleTheme} title="테마 전환">
         {theme === "light" ? <Moon size={19} /> : <Sun size={19} />}

@@ -5,9 +5,13 @@ import { uid, genTitle, sleep } from "@/lib/utils";
 // import { pickAnswer } from "@/lib/data";
 import { a2ApplyEnvelope, a2JsonToEnvelope, a2SetImmutable } from "@/lib/a2ui";
 import { a2uiActionReply, type A2UIActionPayload } from "@/lib/a2ui-data";
+import { API_ENDPOINTS } from "@/config/api";
+import { STORAGE_KEYS } from "@/config/storage";
+import { authHeaders } from "@/lib/api-client";
 
-const LS_KEY = "safetysaas_agent_v1";
-const CHAT_API_URL = "http://localhost:8000/chat/stream"; // 클라우드 서버에서는 서버의 IP 주소를 사용해야 합니다. (localhost는 안됨. 223.130.159.179) 
+const LS_KEY = STORAGE_KEYS.chatStore;
+
+type A2UIActionPayloadWithFiles = A2UIActionPayload & { files?: File[] };
 
 function parseSseFrames(buffer: string): { frames: Array<{ event: string; data: unknown }>; remainder: string } {
   const parts = buffer.split("\n\n");
@@ -142,9 +146,12 @@ export function useChat() {
     try {
       patchMsg(botId, { phase: "status", statusText: "요청을 처리하고 있어요…" });
 
-      const res = await fetch(CHAT_API_URL, {
+      const res = await fetch(API_ENDPOINTS.chatStream, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
         body: JSON.stringify({
           session_id: sessionId,
           message: userText,
@@ -342,10 +349,41 @@ export function useChat() {
   const runActionReply = useCallback(async (botId: string, action: A2UIActionPayload) => {
     const myRun = ++RUN;
     const cancelled = () => myRun !== RUN;
-    const reply = a2uiActionReply(action);
 
     patchMsg(botId, { phase: "status", statusText: "요청을 처리하고 있어요…" });
-    await sleep(500 + Math.random() * 300);
+    let reply = a2uiActionReply(action);
+
+    if (action.name === "register_safety_report") {
+      try {
+        const actionWithFiles = action as A2UIActionPayloadWithFiles;
+        const files = actionWithFiles.files || [];
+        const formData = new FormData();
+        const serializableAction = { ...actionWithFiles };
+        delete serializableAction.files;
+        formData.append("action", JSON.stringify(serializableAction));
+        files.forEach((file) => formData.append("files", file, file.name));
+
+        const res = await fetch(API_ENDPOINTS.a2uiAction, {
+          method: "POST",
+          headers: authHeaders(),
+          body: formData,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        reply = {
+          md: typeof data.md === "string"
+            ? data.md
+            : "✅ 등록 요청이 처리되었습니다.",
+        };
+      } catch (err) {
+        reply = {
+          md: `등록 API 호출 중 오류가 발생했습니다. (${err instanceof Error ? err.message : "Unknown error"})`,
+        };
+      }
+    } else {
+      await sleep(500 + Math.random() * 300);
+    }
+
     if (cancelled()) return;
 
     // Stream answer text
