@@ -7,7 +7,8 @@ import { a2ApplyEnvelope, a2JsonToEnvelope, a2SetImmutable } from "@/lib/a2ui";
 import { a2uiActionReply, type A2UIActionPayload } from "@/lib/a2ui-data";
 import { API_ENDPOINTS } from "@/config/api";
 import { STORAGE_KEYS } from "@/config/storage";
-import { authHeaders } from "@/lib/api-client";
+import { authFetch } from "@/lib/api-client";
+import { cancelSpeech, speakChatText } from "@/lib/tts";
 
 const LS_KEY = STORAGE_KEYS.chatStore;
 
@@ -146,11 +147,10 @@ export function useChat() {
     try {
       patchMsg(botId, { phase: "status", statusText: "요청을 처리하고 있어요…" });
 
-      const res = await fetch(API_ENDPOINTS.chatStream, {
+      const res = await authFetch(API_ENDPOINTS.chatStream, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...authHeaders(),
         },
         body: JSON.stringify({
           session_id: sessionId,
@@ -321,8 +321,9 @@ export function useChat() {
 
       if (cancelled()) return;
 
+      let convertedToA2UI = false;
       if (acc.trim()) {
-        applyJsonTextAsA2UI(acc);
+        convertedToA2UI = applyJsonTextAsA2UI(acc);
       }
 
       patchMsg(botId, {
@@ -330,6 +331,10 @@ export function useChat() {
         streaming: false,
         sources: [],
       });
+
+      if (acc.trim() && !convertedToA2UI) {
+        speakChatText(acc);
+      }
 
       setStore((st) => ({ ...st })); // trigger persist
     } catch (err) {
@@ -363,9 +368,8 @@ export function useChat() {
         formData.append("action", JSON.stringify(serializableAction));
         files.forEach((file) => formData.append("files", file, file.name));
 
-        const res = await fetch(API_ENDPOINTS.a2uiAction, {
+        const res = await authFetch(API_ENDPOINTS.a2uiAction, {
           method: "POST",
-          headers: authHeaders(),
           body: formData,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -415,11 +419,15 @@ export function useChat() {
     }
 
     patchMsg(botId, { phase: "done", streaming: false });
+    if (acc.trim()) {
+      speakChatText(acc);
+    }
     setStore((st) => ({ ...st }));
   }, [patchMsg]);
 
 
   const send = useCallback((text: string, files: { name: string; size: string; icon: string }[]) => {
+    cancelSpeech();
     autoStick.current = true;
     const userMsg: Message = { id: uid(), role: "user", text, files };
     const botId = uid();
@@ -489,6 +497,7 @@ export function useChat() {
 
   const stop = useCallback(() => {
     RUN++;
+    cancelSpeech();
     setMessages((msgs) =>
       msgs.map((m) =>
         m.streaming
@@ -501,6 +510,7 @@ export function useChat() {
   const regenerate = useCallback((botMsgId: string) => {
     const idx = messages.findIndex((m) => m.id === botMsgId);
     if (idx < 1 || !activeId) return;
+    cancelSpeech();
     const userText = messages[idx - 1].text;
     patchMsg(botMsgId, { text: "", streaming: true, phase: "status", statusText: "다시 생각하고 있어요", cot: [], cotRevealed: 0, sources: undefined, feedback: null, a2uiState: null });
     setTimeout(() => runAgent(activeId, botMsgId, userText), 0);
@@ -512,11 +522,13 @@ export function useChat() {
 
   const newChat = useCallback(() => {
     RUN++;
+    cancelSpeech();
     setStore((st) => ({ ...st, activeId: null }));
   }, []);
 
   const selectSession = useCallback((id: string) => {
     RUN++;
+    cancelSpeech();
     setStore((st) => ({ ...st, activeId: id }));
   }, []);
 

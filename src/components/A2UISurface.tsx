@@ -3,13 +3,14 @@
  * A2UI v0.9 — React renderer
  * Ported from design_handoff_safetysaas/app/a2ui.jsx
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { A2UISurfaceState, A2UIComponent } from "@/types";
 import {
   a2Get, a2AbsPath, a2Resolve, a2RunChecks, a2ToStr, a2Interpolate,
   A2UI_ICON_MAP,
 } from "@/lib/a2ui";
 import type { A2UIActionPayload } from "@/lib/a2ui-data";
+import { STORAGE_KEYS } from "@/config/storage";
 import { marked } from "marked";
 
 // ---- Inline icon set (lucide-style SVGs) -----------------------
@@ -57,6 +58,19 @@ function surfaceFiles(surfaceId: string): File[] {
   return Array.from(A2UI_FILE_STORE.entries())
     .filter(([key]) => key.startsWith(prefix))
     .flatMap(([, files]) => files);
+}
+
+function storedUserName() {
+  if (typeof window === "undefined") return "";
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.userInfo);
+    if (!raw) return "";
+    const user = JSON.parse(raw) as Record<string, unknown>;
+    return typeof user.nm === "string" ? user.nm.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 // ---- Text with markdown inline rendering -----------------------
@@ -241,41 +255,34 @@ function A2UIWeeklyScheduleCard({ comp, scopeBase, ctx }: { comp: A2UIComponent;
   const value = a2Resolve((comp as any).value, ctx.model, scopeBase) as Record<string, unknown> | null;
   const title = a2ToStr(value?.title ?? comp.title ?? "주간 일정");
   const monthLabel = a2ToStr(value?.monthLabel ?? "");
-  const activeTab = a2ToStr(value?.activeTab ?? "사업장");
-  const tabs = Array.isArray(value?.tabs) ? value.tabs.map((tab) => a2ToStr(tab)) : ["사업장", "개인"];
   const days = Array.isArray(value?.days) ? (value.days as Record<string, unknown>[]) : [];
+  const now = new Date();
+  const todayKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
 
   return (
     <div className="a2ui-week-card">
       <div className="a2ui-week-title">{title}</div>
       <div className="a2ui-week-head">
         <div className="a2ui-week-month">{monthLabel}</div>
-        <div className="a2ui-week-tabs" role="tablist" aria-label="일정 범위">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              className={tab === activeTab ? "on" : ""}
-              role="tab"
-              aria-selected={tab === activeTab}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+
       </div>
       <div className="a2ui-week-body">
-        <button type="button" className="a2ui-week-nav" aria-label="이전 주">{ICONS.chevron}</button>
+        <button type="button" className="a2ui-week-nav" aria-label="이전 주"></button>
         <div className="a2ui-week-grid">
           {days.map((day, index) => {
             const dayText = a2ToStr(day.day ?? "");
             const dateText = a2ToStr(day.date ?? "");
             const items = Array.isArray(day.items) ? (day.items as Record<string, unknown>[]) : [];
+            const isToday = dateText === todayKey;
             const cls = [
               "a2ui-week-day",
               day.isSaturday ? "sat" : "",
               day.isSunday ? "sun" : "",
-              day.isToday ? "today" : "",
+              isToday ? "today" : "",
             ].filter(Boolean).join(" ");
 
             return (
@@ -357,19 +364,35 @@ function A2UIActvScoreSummaryCard({ comp, scopeBase, ctx }: { comp: A2UIComponen
   const gradeTone = a2ToStr(value?.gradeTone ?? "etc");
   const previousLabel = a2ToStr(value?.previousLabel ?? "상반기 대비 +0점");
   const siteName = a2ToStr(value?.siteName ?? "-");
+  const tenantName = a2ToStr(value?.tenantName ?? "");
+  const periodLabel = a2ToStr(value?.periodLabel ?? "");
+  const collectedAt = a2ToStr(value?.collectedAt ?? "");
+  const insight = a2ToStr(value?.insight ?? "");
   const averageScore = Number(value?.averageScore ?? 0) || 0;
   const averageDeltaText = a2ToStr(value?.averageDeltaText ?? "+0점");
   const gradeCounts = Array.isArray(value?.gradeCounts)
     ? (value.gradeCounts as Record<string, unknown>[])
     : [];
+  const scoreItems = Array.isArray(value?.scoreItems)
+    ? (value.scoreItems as Record<string, unknown>[])
+    : [];
   const deltaTone = averageDeltaText.trim().startsWith("-") ? "bad" : "good";
+  const averageLabel = tenantName ? `${tenantName} 테넌트 평균` : `<${siteName}> 전체 사업장 평균`;
 
   return (
     <div className="a2ui-actv-card">
       <section className="a2ui-actv-score">
         <div className="a2ui-actv-title">{title}</div>
+        <div className="a2ui-actv-meta">
+          <strong>{siteName}</strong>
+          {(tenantName || periodLabel || collectedAt) && (
+            <span>
+              {[tenantName, periodLabel, collectedAt].filter(Boolean).join(" · ")}
+            </span>
+          )}
+        </div>
         <div className="a2ui-actv-main">
-          <strong>{score}</strong>
+          <strong className={gradeTone}>{score}</strong>
           <span>/ {maxScore}점</span>
           <em className={`a2ui-actv-badge ${gradeTone}`}>{gradeName}</em>
         </div>
@@ -379,10 +402,11 @@ function A2UIActvScoreSummaryCard({ comp, scopeBase, ctx }: { comp: A2UIComponen
         </div>
         <div className="a2ui-actv-average">
           <span className="a2ui-actv-people">{ICONS.activity}</span>
-          <span>&lt;{siteName}&gt; 전체 사업장 평균</span>
+          <span>{averageLabel}</span>
           <strong>{averageScore}점 대비</strong>
           <b className={deltaTone}>{averageDeltaText}</b>
         </div>
+        {insight && <p className="a2ui-actv-insight">{insight}</p>}
       </section>
       <section className="a2ui-actv-counts">
         <div className="a2ui-actv-title">평가 별 개수</div>
@@ -404,6 +428,45 @@ function A2UIActvScoreSummaryCard({ comp, scopeBase, ctx }: { comp: A2UIComponen
           })}
         </div>
       </section>
+      {scoreItems.length > 0 && (
+        <section className="a2ui-actv-items">
+          <div className="a2ui-actv-title">안전활동 항목별 점수</div>
+          <div className="a2ui-actv-item-list">
+            {scoreItems.map((item, index) => {
+              const name = a2ToStr(item.name ?? "-");
+              const itemScore = Number(item.score ?? 0) || 0;
+              const percent = Number(item.percent ?? 0) || 0;
+              const caseCount = Number(item.caseCount ?? 0) || 0;
+              const unitName = a2ToStr(item.unitName ?? "점");
+              const unitDescription = a2ToStr(item.unitDescription ?? "");
+              const itemGradeName = a2ToStr(item.gradeName ?? "-");
+              const itemGradeTone = a2ToStr(item.gradeTone ?? "etc");
+              const latestScoreDate = a2ToStr(item.latestScoreDate ?? "");
+              const recommendedCycle = a2ToStr(item.recommendedCycle ?? "");
+              const progress = Math.max(0, Math.min(100, itemScore || percent));
+
+              return (
+                <div key={`${name}-${index}`} className="a2ui-actv-item">
+                  <div className="a2ui-actv-item-head">
+                    <div>
+                      <strong>{name}</strong>
+                      <span>{[unitDescription, latestScoreDate && `최종 ${latestScoreDate}`, recommendedCycle && `권장 ${recommendedCycle}`].filter(Boolean).join(" · ")}</span>
+                    </div>
+                    <em className={`a2ui-actv-badge ${itemGradeTone}`}>{itemGradeName}</em>
+                  </div>
+                  <div className={`a2ui-actv-item-bar ${itemGradeTone}`} aria-hidden="true">
+                    <span style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="a2ui-actv-item-foot">
+                    <b>{itemScore}{unitName}</b>
+                    <span>이행률 {percent}% · 누적 {caseCount}건</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -616,13 +679,16 @@ function A2UIOpertPlanStatusCard({ comp, scopeBase, ctx }: { comp: A2UIComponent
     { label: "작업 승인", count: Number(value?.approvalCount ?? 0) || 0, color: "#F5B400" },
     { label: "작업 완료", count: completedCount, color: "#08B86F" },
   ];
-  const formats = Array.isArray(value?.formats)
+  const rawFormats = Array.isArray(value?.formats)
     ? (value.formats as Record<string, unknown>[]).map((item, index) => ({
-        label: a2ToStr(item.label ?? `구분 ${index + 1}`),
-        count: Number(item.count ?? 0) || 0,
+        label: a2ToStr(item.label ?? item.typeNm ?? item.name ?? `구분 ${index + 1}`),
+        count: Number(item.count ?? item.cnt ?? item.typeCnt ?? item.value ?? item.comptCnt ?? item.completedCnt ?? item.totCnt ?? 0) || 0,
         color: ["#7B74F2", "#7AB6F0", "#08B86F", "#F5B400", "#F97316"][index % 5],
       }))
     : [];
+  const formats = completedCount > 0 && rawFormats.reduce((sum, item) => sum + item.count, 0) === 0
+    ? [{ label: "작업 완료", count: completedCount, color: "#08B86F" }]
+    : rawFormats;
   const formatTotal = formats.reduce((sum, item) => sum + item.count, 0);
   let running = 0;
   const segments = formats
@@ -1293,12 +1359,27 @@ interface Props {
 }
 
 export default function A2UISurface({ surface, msgId, onData, onAction }: Props) {
-  if (!surface || surface.deleted) return null;
-
   const model = surface.dataModel as Record<string, unknown>;
   const hasRoot = surface.components && surface.components.root;
   const primary = surface.theme?.primaryColor;
   const styleVars = primary ? ({ "--a2ui-primary": primary } as React.CSSProperties) : undefined;
+
+  useEffect(() => {
+    if (!surface || surface.deleted || surface.surfaceId !== "safety-report-form") return;
+
+    const report = model.report;
+    const registrant = report && typeof report === "object"
+      ? a2ToStr((report as Record<string, unknown>).registrant ?? "").trim()
+      : "";
+    if (registrant && registrant !== "테스터") return;
+
+    const name = storedUserName();
+    if (!name) return;
+
+    onData(msgId, "/report/registrant", name);
+  }, [model.report, msgId, onData, surface]);
+
+  if (!surface || surface.deleted) return null;
 
   const ctx: A2UICtx = {
     surface,
